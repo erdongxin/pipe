@@ -107,49 +107,63 @@ async def start_testing(token):
             async with session.get(f"{BASE_URL}/nodes", headers=headers, timeout=5) as response:
                 if response.status == 200:
                     nodes = await response.json()
-                    for node in nodes:
-                        node_id = node['node_id']
-                        ip = node['ip']
-                        # 执行节点测试（可以根据需要修改）
-                        status = "在线"  # 假设我们默认测试为在线
-                        latency = 100  # 假设固定延迟
-                        await report_node_result(token, node_id, ip, latency, status)
+                    # 在此处调用批量测试函数，而非逐个节点测试
+                    results = await test_all_nodes(nodes)  # 批量测试函数
+                    await report_all_node_results(token, results)  # 报告结果的函数
                 else:
                     logging.warning(f"获取节点失败，状态码: {response.status}")
         except Exception as e:
             logging.error(f"获取节点失败: {e}")
 
-# 报告节点测试结果
-async def report_node_result(token, node_id, ip, latency, status):
-    """报告单个节点的测试结果"""
+async def test_all_nodes(nodes):
+    """同时测试所有节点"""
+    async def test_single_node(node):
+        try:
+            start = asyncio.get_event_loop().time()
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+                # 不使用代理，直接访问节点
+                async with session.get(f"http://{node['ip']}", timeout=5) as node_response:
+                    latency = (asyncio.get_event_loop().time() - start) * 1000
+                    status = "在线" if node_response.status == 200 else "离线"
+                    latency_value = latency if status == "在线" else -1
+                    return (node['node_id'], node['ip'], latency_value, status)
+        except (asyncio.TimeoutError, aiohttp.ClientConnectorError):
+            return (node['node_id'], node['ip'], -1, "离线")
+
+    # 创建测试任务并执行
+    tasks = [test_single_node(node) for node in nodes]
+    return await asyncio.gather(*tasks)
+
+# 报告所有节点测试结果
+async def report_all_node_results(token, results):
+    """报告所有节点的测试结果"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    test_data = {
-        "node_id": node_id,
-        "ip": ip,
-        "latency": latency,
-        "status": status
-    }
     
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-        try:
-            logging.info(f"正在提交节点测试结果: {test_data}")
-            async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=5) as response:
-                # 打印详细的响应状态码和响应内容
-                status_code = response.status
-                response_text = await response.text()
-                logging.info(f"收到响应，状态码: {status_code}, 响应内容: {response_text}")
+    for result in results:
+        test_data = {
+            "node_id": result['node_id'],
+            "ip": result['ip'],
+            "latency": result['latency'],
+            "status": result['status']
+        }
+        
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+            try:
+                logging.info(f"正在提交节点测试结果: {test_data}")
+                async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=5) as response:
+                    status_code = response.status
+                    response_text = await response.text()
+                    logging.info(f"收到响应，状态码: {status_code}, 响应内容: {response_text}")
                 
-                if status_code == 200:
-                    logging.info(f"节点测试结果已提交成功，Node ID: {node_id}, IP: {ip}, 状态: {status}")
-                else:
-                    logging.error(f"节点测试结果提交失败，状态码: {status_code}, 返回内容: {response_text}")
-        except Exception as e:
-            logging.error(f"提交节点测试结果失败: {e}")
-
-
+                    if status_code == 200:
+                        logging.info(f"节点测试结果已提交成功，Node ID: {result['node_id']}, IP: {result['ip']}")
+                    else:
+                        logging.error(f"节点测试结果提交失败，状态码: {status_code}, 返回内容: {response_text}")
+            except Exception as e:
+                logging.error(f"提交节点测试结果失败: {e}")
 
 # 运行节点命令
 async def run_node():
@@ -186,19 +200,12 @@ async def run_node():
                 if heartbeat_sent:
                     next_heartbeat_time = current_time + timedelta(seconds=HEARTBEAT_INTERVAL)
                 else:
-                    # 如果心跳发送失败，则不更新下一次发送时间，等待重试
                     next_heartbeat_time = current_time + timedelta(seconds=RETRY_DELAY)
 
             # 每次测试间隔执行节点测试
             if current_time >= next_test_time:
                 await start_testing(token)
                 next_test_time = current_time + timedelta(seconds=TEST_INTERVAL)
-
-            remaining_time = next_test_time - current_time
-            if remaining_time.total_seconds() > 0:
-                print(f"\r{remaining_time}", end="")
-            else:
-                print(f"\r下一轮测试即将开始", end="")
 
             await asyncio.sleep(1)
     except KeyboardInterrupt:
@@ -207,4 +214,5 @@ async def run_node():
 # 执行主逻辑
 if __name__ == "__main__":
     asyncio.run(run_node())
+
 
