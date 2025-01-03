@@ -1,5 +1,5 @@
 # run_node.py
-# screen -dmS pipe bash -c 'python3 pipe_yunxing.py'
+# screen -dmS pipe bash -c 'python3 pipe.py'
 
 import os
 import logging
