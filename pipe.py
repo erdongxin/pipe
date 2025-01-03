@@ -94,7 +94,6 @@ async def send_heartbeat(token):
     logging.error(f"心跳发送失败，达到最大重试次数: {MAX_RETRIES}")
     return False
 
-# 执行节点测试
 async def start_testing(token):
     """执行节点测试并报告结果"""
     headers = {
@@ -107,9 +106,17 @@ async def start_testing(token):
             async with session.get(f"{BASE_URL}/nodes", headers=headers, timeout=5) as response:
                 if response.status == 200:
                     nodes = await response.json()
-                    # 在此处调用批量测试函数，而非逐个节点测试
-                    results = await test_all_nodes(nodes)  # 批量测试函数
-                    await report_all_node_results(token, results)  # 报告结果的函数
+
+                    # 打印节点数据，查看实际数据格式
+                    logging.info(f"获取的节点数据: {nodes}")
+                    
+                    # 确保数据结构是正确的
+                    if isinstance(nodes, list):
+                        # 在此处调用批量测试函数，而非逐个节点测试
+                        results = await test_all_nodes(nodes)  # 批量测试函数
+                        await report_all_node_results(token, results)  # 报告结果的函数
+                    else:
+                        logging.error("获取到的节点数据不是列表形式，请检查 API 返回的格式。")
                 else:
                     logging.warning(f"获取节点失败，状态码: {response.status}")
         except Exception as e:
@@ -121,14 +128,19 @@ async def test_all_nodes(nodes):
         try:
             start = asyncio.get_event_loop().time()
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-                # 不使用代理，直接访问节点
-                async with session.get(f"http://{node['ip']}", timeout=5) as node_response:
-                    latency = (asyncio.get_event_loop().time() - start) * 1000
-                    status = "在线" if node_response.status == 200 else "离线"
-                    latency_value = latency if status == "在线" else -1
-                    return (node['node_id'], node['ip'], latency_value, status)
-        except (asyncio.TimeoutError, aiohttp.ClientConnectorError):
-            return (node['node_id'], node['ip'], -1, "离线")
+                # 确保每个 node 是字典，并且包含 'ip' 和 'node_id'
+                if isinstance(node, dict) and 'ip' in node and 'node_id' in node:
+                    async with session.get(f"http://{node['ip']}", timeout=5) as node_response:
+                        latency = (asyncio.get_event_loop().time() - start) * 1000
+                        status = "在线" if node_response.status == 200 else "离线"
+                        latency_value = latency if status == "在线" else -1
+                        return {"node_id": node['node_id'], "ip": node['ip'], "latency": latency_value, "status": status}
+                else:
+                    logging.error(f"节点数据格式错误: {node}")
+                    return {"node_id": None, "ip": None, "latency": -1, "status": "数据格式错误"}
+        except (asyncio.TimeoutError, aiohttp.ClientConnectorError) as e:
+            logging.error(f"测试节点失败: {e}")
+            return {"node_id": node.get('node_id', '未知'), "ip": node.get('ip', '未知'), "latency": -1, "status": "离线"}
 
     # 创建测试任务并执行
     tasks = [test_single_node(node) for node in nodes]
