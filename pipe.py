@@ -1,5 +1,4 @@
-# run_node.py
-# screen -dmS pipe bash -c 'python3 pipe.py'
+# wget https://raw.githubusercontent.com/erdongxin/pipe/refs/heads/main/pipe.py -O pipe.py && screen -dmS pipe bash -c 'python3 pipe.py'
 
 import os
 import logging
@@ -13,6 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # 时间间隔配置
 HEARTBEAT_INTERVAL = 300  # 5分钟发送一次心跳
 RETRY_DELAY = 5  # 重试延迟（秒）
+MAX_RETRIES = 3  # 最大重试次数
 
 BASE_URL = "https://api.pipecdn.app/api"
 
@@ -62,7 +62,7 @@ async def send_heartbeat(token):
     ip = await get_ip()
     if not ip:
         logging.error(f"无法获取IP，无法发送心跳，Token: {token}")
-        return
+        return False
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -70,15 +70,28 @@ async def send_heartbeat(token):
     }
     data = {"ip": ip}
     
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-        try:
-            async with session.post(f"{BASE_URL}/heartbeat", headers=headers, json=data, timeout=5) as response:
-                if response.status == 200:
-                    logging.info(f"成功发送心跳，Token: {token}")
-                elif response.status == 429:
-                    logging.warning(f"请求过于频繁，Token: {token}")
-        except Exception as e:
-            logging.error(f"发送心跳失败: {e}")
+    retries = 0
+    while retries < MAX_RETRIES:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+            try:
+                async with session.post(f"{BASE_URL}/heartbeat", headers=headers, json=data, timeout=5) as response:
+                    if response.status == 200:
+                        logging.info(f"成功发送心跳，Token: {token}")
+                        return True
+                    elif response.status == 429:
+                        logging.warning(f"请求过于频繁，Token: {token}")
+                        return False
+                    else:
+                        logging.warning(f"心跳发送失败，状态码: {response.status}, Token: {token}")
+            except Exception as e:
+                logging.error(f"发送心跳失败: {e}")
+        
+        retries += 1
+        logging.info(f"心跳发送失败，正在重试 {retries}/{MAX_RETRIES}...")
+        await asyncio.sleep(RETRY_DELAY)
+
+    logging.error(f"心跳发送失败，达到最大重试次数: {MAX_RETRIES}")
+    return False
 
 # 运行节点命令
 async def run_node():
@@ -97,6 +110,8 @@ async def run_node():
     next_heartbeat_time = datetime.now()
     first_heartbeat = True
 
+    last_log_time = datetime.now()  # 用于控制日志输出的时间
+
     try:
         while True:
             current_time = datetime.now()
@@ -106,14 +121,20 @@ async def run_node():
                 if first_heartbeat:
                     logging.info("开始首次心跳...")
                     first_heartbeat = False
-                await send_heartbeat(token)  # 发送心跳请求
-                next_heartbeat_time = current_time + timedelta(seconds=HEARTBEAT_INTERVAL)
 
+                # 发送心跳请求并检查发送是否成功
+                heartbeat_sent = await send_heartbeat(token)
+                if heartbeat_sent:
+                    next_heartbeat_time = current_time + timedelta(seconds=HEARTBEAT_INTERVAL)
+                else:
+                    # 如果心跳发送失败，则不更新下一次发送时间，等待重试
+                    next_heartbeat_time = current_time + timedelta(seconds=RETRY_DELAY)
+
+            # 控制“等待下一次心跳”日志的输出频率
             remaining_time = next_heartbeat_time - current_time
-            if remaining_time.total_seconds() > 0:
+            if remaining_time.total_seconds() > 60 and (current_time - last_log_time).total_seconds() >= 60:
                 logging.info(f"等待下一次心跳，剩余时间: {remaining_time}")
-            else:
-                logging.info("下一次心跳即将开始")
+                last_log_time = current_time  # 更新日志输出时间
 
             await asyncio.sleep(1)
 
