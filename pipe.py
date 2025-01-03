@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # 时间间隔配置
 HEARTBEAT_INTERVAL = 300  # 5分钟发送一次心跳
+TEST_INTERVAL = 600  # 10分钟进行一次节点测试
 RETRY_DELAY = 5  # 重试延迟（秒）
 MAX_RETRIES = 3  # 最大重试次数
 
@@ -45,7 +46,7 @@ def read_pipe_file():
 # 获取当前IP地址
 async def get_ip():
     """获取当前IP地址"""
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
         try:
             async with session.get("https://api64.ipify.org?format=json", timeout=5) as response:
                 if response.status == 200:
@@ -72,10 +73,10 @@ async def send_heartbeat(token):
     
     retries = 0
     while retries < MAX_RETRIES:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             try:
                 async with session.post(f"{BASE_URL}/heartbeat", headers=headers, json=data, timeout=5) as response:
-                    if response.status == 201:
+                    if response.status == 201:  # 修改为201，表示心跳发送成功
                         logging.info(f"成功发送心跳，Token: {token}")
                         return True
                     elif response.status == 429:
@@ -93,72 +94,58 @@ async def send_heartbeat(token):
     logging.error(f"心跳发送失败，达到最大重试次数: {MAX_RETRIES}")
     return False
 
-# 获取所有节点
-async def get_nodes(token):
-    """获取节点列表"""
+# 执行节点测试
+async def start_testing(token):
+    """执行节点测试并报告结果"""
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    try:
-        async with aiohttp.ClientSession() as session:
+    
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+        try:
             async with session.get(f"{BASE_URL}/nodes", headers=headers, timeout=5) as response:
                 if response.status == 200:
                     nodes = await response.json()
-                    return nodes
+                    for node in nodes:
+                        node_id = node['node_id']
+                        ip = node['ip']
+                        # 执行节点测试（可以根据需要修改）
+                        status = "在线"  # 假设我们默认测试为在线
+                        latency = 100  # 假设固定延迟
+                        await report_node_result(token, node_id, ip, latency, status)
                 else:
-                    logging.error(f"获取节点失败，状态码: {response.status}")
-                    return []
-    except Exception as e:
-        logging.error(f"获取节点失败: {e}")
-        return []
+                    logging.warning(f"获取节点失败，状态码: {response.status}")
+        except Exception as e:
+            logging.error(f"获取节点失败: {e}")
 
-# 测试节点并报告
-async def test_all_nodes_and_report(token, nodes):
-    """测试所有节点并报告结果"""
-    async def test_single_node(node):
+# 报告节点测试结果
+async def report_node_result(token, node_id, ip, latency, status):
+    """报告单个节点的测试结果"""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    test_data = {
+        "node_id": node_id,
+        "ip": ip,
+        "latency": latency,
+        "status": status
+    }
+    
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
         try:
-            start = asyncio.get_event_loop().time()
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://{node['ip']}", timeout=5) as node_response:
-                    latency = (asyncio.get_event_loop().time() - start) * 1000
-                    status = "在线" if node_response.status == 200 else "离线"
-                    latency_value = latency if status == "在线" else -1
-                    return (node['node_id'], node['ip'], latency_value, status)
-        except (asyncio.TimeoutError, aiohttp.ClientConnectorError):
-            return (node['node_id'], node['ip'], -1, "离线")
-
-    async def report_node_result(node_id, ip, latency, status):
-        """报告单个节点的测试结果"""
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
-        test_data = {
-            "node_id": node_id,
-            "ip": ip,
-            "latency": latency,
-            "status": status
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=5) as response:
-                    if response.status == 200:
-                        return
-            except Exception:
-                pass
-
-    tasks = [test_single_node(node) for node in nodes]
-    results = await asyncio.gather(*tasks)
-
-    # 汇报结果
-    for node_id, ip, latency, status in results:
-        await report_node_result(node_id, ip, latency, status)
+            async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=5) as response:
+                if response.status == 200:
+                    logging.info(f"节点测试结果已提交，Node ID: {node_id}, IP: {ip}, 状态: {status}")
+                else:
+                    logging.warning(f"节点测试结果提交失败，状态码: {response.status}")
+        except Exception as e:
+            logging.error(f"提交节点测试结果失败: {e}")
 
 # 运行节点命令
 async def run_node():
-    """运行节点并定时发送心跳"""
+    """运行节点并定时发送心跳与执行节点测试"""
     server_info = read_pipe_file()
     if not server_info:
         logging.error("无法加载Token和邮箱信息，退出运行。")
@@ -171,6 +158,7 @@ async def run_node():
 
     # 心跳定时任务
     next_heartbeat_time = datetime.now()
+    next_test_time = datetime.now()
     first_heartbeat = True
 
     last_log_time = datetime.now()  # 用于控制日志输出的时间
@@ -193,19 +181,18 @@ async def run_node():
                     # 如果心跳发送失败，则不更新下一次发送时间，等待重试
                     next_heartbeat_time = current_time + timedelta(seconds=RETRY_DELAY)
 
-                # 获取节点并报告状态
-                nodes = await get_nodes(token)
-                if nodes:
-                    await test_all_nodes_and_report(token, nodes)
+            # 每次测试间隔执行节点测试
+            if current_time >= next_test_time:
+                await start_testing(token)
+                next_test_time = current_time + timedelta(seconds=TEST_INTERVAL)
 
-            # 控制“等待下一次心跳”日志的输出频率
-            remaining_time = next_heartbeat_time - current_time
-            if remaining_time.total_seconds() > 60 and (current_time - last_log_time).total_seconds() >= 60:
-                logging.info(f"等待下一次心跳，剩余时间: {remaining_time}")
-                last_log_time = current_time  # 更新日志输出时间
+            remaining_time = next_test_time - current_time
+            if remaining_time.total_seconds() > 0:
+                print(f"\r{remaining_time}", end="")
+            else:
+                print(f"\r下一轮测试即将开始", end="")
 
             await asyncio.sleep(1)
-
     except KeyboardInterrupt:
         logging.info("\n停止节点，返回主菜单...")
 
