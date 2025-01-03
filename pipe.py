@@ -75,7 +75,7 @@ async def send_heartbeat(token):
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.post(f"{BASE_URL}/heartbeat", headers=headers, json=data, timeout=5) as response:
-                    if response.status == 200:
+                    if response.status == 201:
                         logging.info(f"成功发送心跳，Token: {token}")
                         return True
                     elif response.status == 429:
