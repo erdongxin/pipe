@@ -176,7 +176,8 @@ async def report_all_node_results(token, results):
                     else:
                         logging.error(f"节点测试结果提交失败，状态码: {status_code}, 返回内容: {response_text}")
             except Exception as e:
-                logging.error(f"提交节点测试结果失败: {e}")
+                logging.exception(f"提交节点测试结果失败: {e}")
+
 
 # 运行节点命令
 async def run_node():
