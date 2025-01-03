@@ -170,7 +170,8 @@ async def report_all_node_results(token, results):
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             try:
                 logging.info(f"正在提交节点测试结果: {test_data}")
-                async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=5) as response:
+                # 增加更长的超时时间（例如 10秒）
+                async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=10) as response:
                     status_code = response.status
                     response_text = await response.text()
                     
@@ -181,8 +182,11 @@ async def report_all_node_results(token, results):
                         logging.info(f"节点测试结果已提交成功，Node ID: {result['node_id']}, IP: {result['ip']}")
                     else:
                         logging.error(f"节点测试结果提交失败，状态码: {status_code}, 返回内容: {response_text}")
+            except asyncio.TimeoutError as e:
+                logging.error(f"提交节点测试结果失败: 请求超时 - {e}")
             except Exception as e:
                 logging.exception(f"提交节点测试结果失败: {e}")
+
 
 # 运行节点命令
 async def run_node():
