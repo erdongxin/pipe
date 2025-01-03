@@ -110,8 +110,8 @@ async def start_testing(token):
                     # 打印节点数据，查看实际数据格式
                     logging.info(f"获取的节点数据: {nodes}")
                     
-                    # 确保数据结构是字典列表
-                    if isinstance(nodes, list) and isinstance(nodes[0], dict):
+                    # 检查数据格式是否为字典列表
+                    if isinstance(nodes, list) and all(isinstance(node, dict) for node in nodes):
                         results = await test_all_nodes(nodes)  # 批量测试函数
                         await report_all_node_results(token, results)  # 报告结果的函数
                     else:
@@ -127,7 +127,7 @@ async def test_all_nodes(nodes):
         try:
             start = asyncio.get_event_loop().time()
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-                # 直接访问字典字段
+                # 确保node是字典并且包含node_id和ip
                 if isinstance(node, dict) and 'node_id' in node and 'ip' in node:
                     node_id, ip = node['node_id'], node['ip']
                     async with session.get(f"http://{ip}", timeout=5) as node_response:
