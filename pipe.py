@@ -146,7 +146,6 @@ async def test_all_nodes(nodes):
     tasks = [test_single_node(node) for node in nodes]
     return await asyncio.gather(*tasks)
 
-
 # 报告所有节点测试结果
 async def report_all_node_results(token, results):
     """报告所有节点的测试结果"""
@@ -163,12 +162,19 @@ async def report_all_node_results(token, results):
             "status": result['status']
         }
         
+        # 打印请求信息
+        logging.info(f"准备提交请求，URL: {BASE_URL}/test")
+        logging.info(f"请求头: {headers}")
+        logging.info(f"请求体: {test_data}")
+        
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             try:
                 logging.info(f"正在提交节点测试结果: {test_data}")
                 async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=5) as response:
                     status_code = response.status
                     response_text = await response.text()
+                    
+                    # 打印响应信息
                     logging.info(f"收到响应，状态码: {status_code}, 响应内容: {response_text}")
                 
                     if status_code == 200:
@@ -177,7 +183,6 @@ async def report_all_node_results(token, results):
                         logging.error(f"节点测试结果提交失败，状态码: {status_code}, 返回内容: {response_text}")
             except Exception as e:
                 logging.exception(f"提交节点测试结果失败: {e}")
-
 
 # 运行节点命令
 async def run_node():
