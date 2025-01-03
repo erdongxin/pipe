@@ -110,12 +110,12 @@ async def start_testing(token):
                     # 打印节点数据，查看实际数据格式
                     logging.info(f"获取的节点数据: {nodes}")
                     
-                    # 确保数据结构是列表且是元组形式
-                    if isinstance(nodes, list) and isinstance(nodes[0], tuple):
+                    # 确保数据结构是字典列表
+                    if isinstance(nodes, list) and isinstance(nodes[0], dict):
                         results = await test_all_nodes(nodes)  # 批量测试函数
                         await report_all_node_results(token, results)  # 报告结果的函数
                     else:
-                        logging.error("获取到的节点数据格式不正确。应该是列表且每个元素是元组。")
+                        logging.error("获取到的节点数据格式不正确。应该是列表且每个元素是字典。")
                 else:
                     logging.warning(f"获取节点失败，状态码: {response.status}")
         except Exception as e:
@@ -127,9 +127,9 @@ async def test_all_nodes(nodes):
         try:
             start = asyncio.get_event_loop().time()
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-                # 确保每个节点是元组，访问字段时使用索引
-                if isinstance(node, tuple) and len(node) >= 2:
-                    node_id, ip = node[0], node[1]
+                # 直接访问字典字段
+                if isinstance(node, dict) and 'node_id' in node and 'ip' in node:
+                    node_id, ip = node['node_id'], node['ip']
                     async with session.get(f"http://{ip}", timeout=5) as node_response:
                         latency = (asyncio.get_event_loop().time() - start) * 1000
                         status = "在线" if node_response.status == 200 else "离线"
@@ -140,7 +140,7 @@ async def test_all_nodes(nodes):
                     return {"node_id": None, "ip": None, "latency": -1, "status": "数据格式错误"}
         except (asyncio.TimeoutError, aiohttp.ClientConnectorError) as e:
             logging.error(f"测试节点失败: {e}")
-            return {"node_id": node[0] if len(node) > 0 else '未知', "ip": node[1] if len(node) > 1 else '未知', "latency": -1, "status": "离线"}
+            return {"node_id": node.get('node_id', '未知'), "ip": node.get('ip', '未知'), "latency": -1, "status": "离线"}
 
     # 创建测试任务并执行
     tasks = [test_single_node(node) for node in nodes]
