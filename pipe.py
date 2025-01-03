@@ -137,12 +137,16 @@ async def report_node_result(token, node_id, ip, latency, status):
         try:
             logging.info(f"正在提交节点测试结果: {test_data}")
             async with session.post(f"{BASE_URL}/test", headers=headers, json=test_data, timeout=5) as response:
+                logging.info(f"收到响应，状态码: {response.status}")
                 if response.status == 200:
                     logging.info(f"节点测试结果已提交成功，Node ID: {node_id}, IP: {ip}, 状态: {status}")
                 else:
-                    logging.error(f"节点测试结果提交失败，状态码: {response.status}, 返回内容: {await response.text()}")
+                    # 如果不是200状态，打印返回内容
+                    error_message = await response.text()
+                    logging.error(f"节点测试结果提交失败，状态码: {response.status}, 返回内容: {error_message}")
         except Exception as e:
             logging.error(f"提交节点测试结果失败: {e}")
+
 
 # 运行节点命令
 async def run_node():
