@@ -75,11 +75,16 @@ async def send_heartbeat(token):
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             try:
                 async with session.post(f"{BASE_URL}/heartbeat", headers=headers, json=data, timeout=5) as response:
-                    if response.status == 200:
-                        logging.info(f"成功发送心跳，Token: {token}")
+                    # 打印返回的状态码和内容
+                    response_text = await response.text()
+                    logging.info(f"响应状态码: {response.status}")
+                    logging.info(f"响应内容: {response_text}")
+                    
+                    if response.status == 200 or response.status == 201:
+                        logging.info(f"成功发送心跳，Token: {token}, 状态码: {response.status}")
                         return True
                     elif response.status == 429:
-                        logging.warning(f"请求过于频繁，Token: {token}")
+                        logging.warning(f"请求过于频繁，Token: {token}, 状态码: {response.status}")
                         return False
                     else:
                         logging.warning(f"心跳发送失败，状态码: {response.status}, Token: {token}")
